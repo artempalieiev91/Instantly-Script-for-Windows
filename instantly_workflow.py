@@ -23,14 +23,34 @@ BUCKET_TEMPLATE_MARKERS: dict[str, str] = {
 }
 
 # Кошики для полів сайдбара «Gmail/Other» та «Outlook» (по два регіони на провайдера).
-BUCKETS_GMAIL_OTHER: frozenset[str] = frozenset({
+ORDERED_GMAIL_BUCKETS: tuple[str, ...] = (
     "Other (gmail, etc) USA",
     "Other (gmail, etc) Europe",
-})
-BUCKETS_OUTLOOK: frozenset[str] = frozenset({
-    "outlook USA",
-    "outlook Europe",
-})
+)
+ORDERED_OUTLOOK_BUCKETS: tuple[str, ...] = ("outlook USA", "outlook Europe")
+BUCKETS_GMAIL_OTHER: frozenset[str] = frozenset(ORDERED_GMAIL_BUCKETS)
+BUCKETS_OUTLOOK: frozenset[str] = frozenset(ORDERED_OUTLOOK_BUCKETS)
+
+
+def buckets_for_provider_scope(
+    buckets: dict[str, pd.DataFrame],
+    scope: str,
+) -> dict[str, pd.DataFrame]:
+    """
+    scope: «all» — усі сегменти; «gmail» — лише Other (gmail…) USA/Europe;
+    «outlook» — лише outlook USA/Europe.
+    """
+    s = (scope or "all").strip().casefold()
+    if s in ("", "all"):
+        return dict(buckets)
+    if s == "gmail":
+        keep = BUCKETS_GMAIL_OTHER
+    elif s in ("outlook",):
+        keep = BUCKETS_OUTLOOK
+    else:
+        return dict(buckets)
+    return {k: v for k, v in buckets.items() if k in keep}
+
 
 API_FIELD_BY_IMPORT_TYPE: dict[str, str] = {
     "first_name": "first_name",

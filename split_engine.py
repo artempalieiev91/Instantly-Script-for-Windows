@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import io
 import re
 from typing import Any
 
 import pandas as pd
+import requests
 
 OUTPUT_SHEETS = [
     "Other (gmail, etc) USA",
@@ -150,12 +152,84 @@ def extract_gid_from_url(url: str) -> str | None:
     return None
 
 
+def discover_google_sheet_gids(spreadsheet_url_or_id: str, *, timeout: int = 60) -> list[str]:
+    """
+    Намагається витягнути gid аркушів із HTML сторінки /edit (без Google API).
+    Публічна таблиця з доступом «перегляд за посиланням» зазвичай віддає gid у розмітці.
+    """
+    sid = extract_spreadsheet_id(spreadsheet_url_or_id)
+    url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+    r = requests.get(url, timeout=timeout)
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Не вдалося завантажити HTML таблиці для пошуку аркушів (HTTP {r.status_code}). "
+            "Перевірте доступ за посиланням."
+        )
+    text = r.text
+    patterns = (
+        r'"sheetId"\s*:\s*(\d+)',
+        r'"gid"\s*:\s*(\d+)',
+        r"[#&?]gid=(\d+)",
+    )
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for pat in patterns:
+        for m in re.finditer(pat, text):
+            gid = m.group(1)
+            if gid not in seen:
+                seen.add(gid)
+                ordered.append(gid)
+    return ordered
+
+
 def google_sheet_csv_export_url(spreadsheet_url_or_id: str, gid: str | None = None) -> str:
     sid = extract_spreadsheet_id(spreadsheet_url_or_id)
     base = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv"
     if gid:
         base += f"&gid={gid}"
     return base
+
+
+def google_sheet_xlsx_export_url(spreadsheet_url_or_id: str) -> str:
+    sid = extract_spreadsheet_id(spreadsheet_url_or_id)
+    return f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+
+
+def load_spreadsheet_all_tabs_via_xlsx_export(
+    spreadsheet_url_or_id: str,
+    *,
+    timeout: int = 120,
+) -> list[tuple[str, pd.DataFrame]]:
+    """
+    Одне завантаження книги як XLSX з docs.google.com/.../export (усі аркуші в одному файлі).
+    Якщо експорт недоступний або файл не читається — порожній список (викликайте fallback на CSV/gid).
+    Потребує openpyxl (через pandas.read_excel).
+    """
+    try:
+        sid = extract_spreadsheet_id(spreadsheet_url_or_id)
+    except ValueError:
+        return []
+    url = google_sheet_xlsx_export_url(sid)
+    try:
+        r = requests.get(url, timeout=timeout)
+    except requests.RequestException:
+        return []
+    if r.status_code != 200:
+        return []
+    try:
+        xf = pd.ExcelFile(io.BytesIO(r.content), engine="openpyxl")
+    except Exception:
+        return []
+    out: list[tuple[str, pd.DataFrame]] = []
+    for name in xf.sheet_names:
+        try:
+            df = pd.read_excel(xf, sheet_name=name, header=0)
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        out.append((str(name), df))
+    return out
 
 
 def normalize_provider(cell: Any) -> str | None:
@@ -330,6 +404,9 @@ def split_dataframe(
 
 def summary_lines(buckets: dict[str, pd.DataFrame], unmatched: pd.DataFrame | None) -> list[str]:
     lines = [f"{name}: {len(df)} рядків даних" for name, df in buckets.items()]
+    if buckets:
+        total = sum(len(df) for df in buckets.values())
+        lines.append(f"Усього (обрана область): {total} рядків даних")
     if unmatched is not None and len(unmatched):
         lines.append(f"_Unmatched_split: {len(unmatched)} рядків")
     return lines

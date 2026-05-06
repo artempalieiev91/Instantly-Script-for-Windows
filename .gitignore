@@ -1,5 +1,8 @@
 .env
 .streamlit/secrets.toml
+instantly_sender_pools_sidebar.json
+crm_saved_runs.json
+crm_template_variables.json
 __pycache__/
 *.pyc
 .venv/
