@@ -95,6 +95,7 @@ _CRM_SPLIT_ONLY_LOG: list[dict[str, str]] = [
 # Вибір у блоці «CRM після розбиття»: один запис на обидва регіони провайдера (USA + Europe).
 _CRM_SPLIT_COMBINED_GMAIL_KEY = "__crm_split_combined_gmail__"
 _CRM_SPLIT_COMBINED_OUTLOOK_KEY = "__crm_split_combined_outlook__"
+_CRM_SPLIT_COMBINED_ALL_KEY = "__crm_split_combined_gmail_outlook__"
 
 
 def _crm_json_safe(obj: Any) -> Any:
@@ -1857,6 +1858,11 @@ def _render_split_table_api_tab() -> None:
             seg_choices_for_crm.append(_nm)
     if unmatched is not None and len(unmatched):
         seg_choices_for_crm.append("_Unmatched_split")
+    if (
+        _CRM_SPLIT_COMBINED_GMAIL_KEY in seg_choices_for_crm
+        and _CRM_SPLIT_COMBINED_OUTLOOK_KEY in seg_choices_for_crm
+    ):
+        seg_choices_for_crm.insert(0, _CRM_SPLIT_COMBINED_ALL_KEY)
     if seg_choices_for_crm:
         st.divider()
         st.subheader("CRM після розбиття (без Instantly API)")
@@ -1866,6 +1872,8 @@ def _render_split_table_api_tab() -> None:
         )
 
         def _fmt_crm_split_seg_pick(opt: str) -> str:
+            if opt == _CRM_SPLIT_COMBINED_ALL_KEY:
+                return "Все (Gmail і Outlook)"
             if opt == _CRM_SPLIT_COMBINED_GMAIL_KEY:
                 return "Gmail / Other — USA + Europe (увесь провайдер)"
             if opt == _CRM_SPLIT_COMBINED_OUTLOOK_KEY:
@@ -1897,6 +1905,25 @@ def _render_split_table_api_tab() -> None:
                     df_save = unmatched
                     if df_save is not None and not df_save.empty:
                         snap = _contacts_snapshot_single_bucket(crm_pick_seg, df_save, scope_opt)
+                elif crm_pick_seg == _CRM_SPLIT_COMBINED_ALL_KEY:
+                    subset = {}
+                    for k in ORDERED_GMAIL_BUCKETS:
+                        if (
+                            k in work_buckets
+                            and work_buckets[k] is not None
+                            and not work_buckets[k].empty
+                        ):
+                            subset[k] = work_buckets[k]
+                    for k in ORDERED_OUTLOOK_BUCKETS:
+                        if (
+                            k in work_buckets
+                            and work_buckets[k] is not None
+                            and not work_buckets[k].empty
+                        ):
+                            subset[k] = work_buckets[k]
+                    if subset:
+                        df_save = pd.concat(list(subset.values()), ignore_index=True)
+                        snap = _contacts_snapshot_split_only_multi_buckets(subset, scope_opt)
                 elif crm_pick_seg == _CRM_SPLIT_COMBINED_GMAIL_KEY:
                     subset = {
                         k: work_buckets[k]
