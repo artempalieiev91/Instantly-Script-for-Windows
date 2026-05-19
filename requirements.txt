@@ -1,4 +1,4 @@
-streamlit>=1.33.0
+streamlit>=1.49.0
 streamlit-js-eval>=1.0.0
 pandas>=2.0.0
 requests>=2.28.0

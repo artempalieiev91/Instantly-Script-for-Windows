@@ -19,6 +19,11 @@ OUTPUT_SHEETS = [
     "outlook Europe",
 ]
 
+# Лише регіон (та сама країнознавча логіка, що для Instantly): USA+Канада vs Європа.
+LH_GEO_BUCKET_USA_CA = "USA_Canada"
+LH_GEO_BUCKET_EUROPE = "Europe"
+LH_GEO_SHEETS = [LH_GEO_BUCKET_USA_CA, LH_GEO_BUCKET_EUROPE]
+
 DEFAULT_PROVIDER_COLUMN = "email_provider_research_team"
 DEFAULT_LOCATION_COLUMN = ""
 
@@ -379,6 +384,73 @@ def split_rows(
             unmatched.append(row)
 
     return buckets, unmatched, header
+
+
+def split_rows_geo_only(
+    rows: list[list[Any]],
+    location_column: str = DEFAULT_LOCATION_COLUMN,
+) -> tuple[dict[str, list[list[Any]]], list[list[Any]], list[Any]]:
+    """
+    Поділ лише за регіоном (без стовпця провайдера): USA+Canada → USA_Canada, Європа → Europe.
+    Країни/регіони — ті самі правила, що й для Instantly (normalize_region_from_country_value).
+    """
+    if not rows:
+        raise ValueError("Немає рядків.")
+    header = list(rows[0])
+    body = [list(r) for r in rows[1:]]
+    if not header:
+        raise ValueError("Лист порожній.")
+
+    country_indices = find_country_column_indices(header)
+    use_override = bool(str(location_column or "").strip())
+    li_override = -1
+    if use_override:
+        li_override = find_column_index(header, str(location_column).strip())
+
+    buckets: dict[str, list[list[Any]]] = {n: [] for n in LH_GEO_SHEETS}
+    unmatched: list[list[Any]] = []
+    max_cols = len(header)
+    fake_pi = -1
+
+    for row in body:
+        while len(row) < max_cols:
+            row.append("")
+        if li_override >= 0:
+            lv = normalize_region_from_country_value(
+                row[li_override] if li_override < len(row) else ""
+            )
+        else:
+            lv = resolve_region_for_row(row, country_indices, fake_pi)
+        if lv == "usa":
+            buckets[LH_GEO_BUCKET_USA_CA].append(row)
+        elif lv == "europe":
+            buckets[LH_GEO_BUCKET_EUROPE].append(row)
+        else:
+            unmatched.append(row)
+
+    return buckets, unmatched, header
+
+
+def split_dataframe_geo_only(
+    df: pd.DataFrame,
+    location_column: str = DEFAULT_LOCATION_COLUMN,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame | None]:
+    """Поділ за регіоном з даних таблиці (колонка країни, напр. Country) — не з CRM."""
+    rows = [df.columns.tolist()] + df.astype(object).where(pd.notna(df), "").values.tolist()
+    buckets_rows, unmatched_rows, header = split_rows_geo_only(
+        rows, location_column=location_column
+    )
+    out: dict[str, pd.DataFrame] = {}
+    for name in LH_GEO_SHEETS:
+        data_rows = buckets_rows.get(name, [])
+        if data_rows:
+            out[name] = pd.DataFrame(data_rows, columns=header)
+        else:
+            out[name] = pd.DataFrame(columns=header)
+    unmatched_df = None
+    if unmatched_rows:
+        unmatched_df = pd.DataFrame(unmatched_rows, columns=header)
+    return out, unmatched_df
 
 
 def split_dataframe(
